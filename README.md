@@ -16,14 +16,14 @@ The following Python code uses CFSv2 weather data to replicate Saildrone data re
 - Current code analyzes Saildrone at a constant speed, but updates to come
 
 # Output
-Plot 1: Ocean Temp and Salinty
- - Top two graphs are day one averages overlayed by the paths of each Saildrone
- - Bottomm four are temp and sailinty cross sections over Saildrone's timescale
-Plot 2: Surface and Latent Heat Flux
- - Top two graphs are day one averages overlayed by the paths of each Saildrone
- - Bottom two aretime series plots based on the Saildrone's path
-Plot 3: Wind Stress and Surface Current Speeds (same format as plot 2)
-Plot 4: Precip and Ocean Surface Height (same format as plot 2)
+- Plot 1: Ocean Temp and Salinty
+  - Top two graphs are day one averages overlayed by the paths of each Saildrone
+  - Bottomm four are temp and sailinty cross sections over Saildrone's timescale
+- Plot 2: Surface and Latent Heat Flux
+  - Top two graphs are day one averages overlayed by the paths of each Saildrone
+  - Bottom two aretime series plots based on the Saildrone's path
+- Plot 3: Wind Stress and Surface Current Speeds (same format as plot 2)
+- Plot 4: Precip and Ocean Surface Height (same format as plot 2)
 
 # Acknowledgements
 - Much of this code is built off of Shuyi Chen's pyhycom's code - Thank you
