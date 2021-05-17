@@ -1,0 +1,1963 @@
+def Sampler(start_time, end_time, SD1_start_lon, SD1_start_lat, SD2_start_lon, SD2_start_lat, Route):
+    import xarray as xr
+    import datetime as dt
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import BoundaryNorm, LinearSegmentedColormap
+    from matplotlib.ticker import MaxNLocator
+    import cmocean
+    from datetime import datetime
+
+    from Tests2 import calc_trajNEWERgrib
+    from Tests2 import vertical_prof_trajectory
+    from Tests2 import plot_map_background
+    from Tests2 import XYT_NonDepth_1VAR_trajectory
+    from Tests2 import Depth_2VAR_trajectory
+    from Tests2 import XYU_NonDepth_2VAR_trajectory
+
+    ###############################################################################
+
+    # Calculate SD's speeds at every grid
+
+    # Reading in data
+
+    # Select parameter to plot data and depth (windspeeds at each vector)
+    paramU = 'U_GRD_126_HTGL'
+    paramV = 'V_GRD_126_HTGL'
+
+    # Create slice variables subset domain
+    # Data must fit onto map
+    # time_slice = slice(start_time, end_time)
+    lon_sliceWS = slice(243, 267)
+
+    # Open dataset via xarray
+    ds = xr.open_mfdataset('D:/CFSv2/Winds/*.nc', concat_dim='time')
+    # U = ds.variables[paramU][:]
+
+    # Get data, selecting lat/lon slice
+    # Two datas because two wind vectors
+    dataU = ds[paramU].sel(lon_126=lon_sliceWS)
+    dataV = ds[paramV].sel(lon_126=lon_sliceWS)
+
+    # Compute wind stress vector
+    # Use pythags thm to get magnitude vector
+    dataU = np.square(dataU)
+    dataV = np.square(dataV)
+    data = np.add(dataU, dataV)
+    WS = np.sqrt(data)
+    SS = WS * 0.23330174335497916
+
+    # Convert lon from 0-360 to -180-180 ... time from 1-x to datetime)
+    SS = SS.assign_coords(lon_126=(((SS.lon_126 + 180) % 360) - 180))
+
+    # Convert time from intgers to datetime)
+    tlength = len(SS.time.values)
+    base = dt.datetime(2003, 9, 5)
+    arr = np.array([base + dt.timedelta(hours=i) for i in range(tlength)])
+    SS = SS.assign_coords(time=(arr))
+
+    # Calculate time in each direction
+    FMT = '%Y-%m-%d %H:%M:%S'
+    tdelta = datetime.strptime(end_time, FMT) - datetime.strptime(start_time, FMT)
+    Stime = tdelta.total_seconds() / 3600
+
+    if Route is 'Meridional':
+        ##### Trajectories
+
+        # Meridional Sectioning (Saildrone 1)
+
+        # (Saildrone 1)
+        # Starting lat and lon values
+        trajectory = {'lon': [SD1_start_lon], 'lat': [SD1_start_lat]}
+
+        lon = SS.lon_126.values
+        lat = SS.lat_126.values
+
+        def lookupNearest(time_pos, lon0, lat0):
+            loni = np.abs(lon - lon0).argmin()
+            lati = np.abs(lat - lat0).argmin()
+            return SS[time_pos, lati, loni]
+
+        # Use ^ function to find closest initial location and wind speed
+        start_traj = lookupNearest(0, trajectory['lon'], trajectory['lat'])
+
+        # Starting time value
+        trajectory = {'datetime': [dt.datetime(2003, 9, 5, 0, 0, 0)], 'lon': [float(start_traj.lon_126.values)],
+                      'lat': [float(start_traj.lat_126.values)]}
+
+        #            duration_hours, direction_ccw_from_east, SS, start_traj, prev_trajectory=None):
+        trajectory = calc_trajNEWERgrib(Stime, -90.0, SS, start_traj, prev_trajectory=trajectory)
+        start_traj = lookupNearest(Stime, trajectory['lon'][-1], trajectory['lat'][-1])  # from ^ traj last point
+        trajectory = calc_trajNEWERgrib(Stime, 90.0, SS, start_traj, prev_trajectory=trajectory)
+
+        # (Saildrone 2)
+        # Starting lat and lon values
+        trajectory2 = {'lon': [SD2_start_lon], 'lat': [SD2_start_lat]}
+
+        lon = SS.lon_126.values
+        lat = SS.lat_126.values
+
+        # Use ^ function to find closest initial location and wind speed
+        start_traj2 = lookupNearest(0, trajectory2['lon'], trajectory2['lat'])
+
+        # Starting time value
+        trajectory2 = {'datetime': [dt.datetime(2003, 9, 5, 0, 0, 0)], 'lon': [float(start_traj2.lon_126.values)],
+                       'lat': [float(start_traj2.lat_126.values)]}
+
+        #           duration_hours, direction_ccw_from_east, SS, start_traj, prev_trajectory=None):
+        trajectory2 = calc_trajNEWERgrib(Stime, -90.0, SS, start_traj2, prev_trajectory=trajectory2)
+        start_traj2 = lookupNearest(Stime, trajectory2['lon'][-1], trajectory2['lat'][-1])  # from ^ traj last point
+        trajectory2 = calc_trajNEWERgrib(Stime, 90.0, SS, start_traj2, prev_trajectory=trajectory2)
+
+        ###############################################################################
+
+        # Import data
+
+        # Open dataset via xarray
+        ds = xr.open_mfdataset('D:/CFSv2/Tests/*.nc')
+
+        # Convert time from object to datetime64
+        time = ds.variables['time'][:]
+        datetimeindex = ds.indexes['time'].to_datetimeindex()  # converts to python friendly 'datetime'
+        ds['time'] = datetimeindex
+
+        # Other Slices
+        time_slice = slice(start_time, end_time)
+        lat_slice = slice(6, 20)
+        lon_slice = slice(-115, -95)
+        depth_slice = slice(0, 150)
+        depth = 0
+
+        # Times in hours (Product 288hrs/24hrs = 12days (based on time slices)
+        Vtime = np.arange(0, (((Stime + 1) * 2) + 1), 1)
+
+        ########################################################################
+
+        # Plot 1 (Temp and Salinity)
+
+        # Read in Vertical Profiles (var, data, ...)
+        F = vertical_prof_trajectory('temp', ds, depth_slice, lon_slice, lat_slice, time_slice, trajectory)
+        G = vertical_prof_trajectory('salt', ds, depth_slice, lon_slice, lat_slice, time_slice, trajectory)
+        H = vertical_prof_trajectory('temp', ds, depth_slice, lon_slice, lat_slice, time_slice, trajectory2)
+        I = vertical_prof_trajectory('salt', ds, depth_slice, lon_slice, lat_slice, time_slice, trajectory2)
+
+        plt.style.use('dark_background')
+
+        # Day 1 Data
+        paramt = 'temp'
+        params = 'salt'
+        depth2 = 0.5
+
+        # Start and end time for day 1
+        ST = start_time
+        ET = start_time.replace("00:00:00", "23:00:00")  # only averages until end of day - not a full 24 hour avg
+        time_slice1 = slice(ST, ET)
+
+        # Get data, selecting time, depth, lat/lon slice
+        SST = ds[paramt].sel(st_ocean=depth2, time=time_slice1)
+        SSS = ds[params].sel(st_ocean=depth2, time=time_slice1)
+
+        # Specify longitude and latitude values for chosen domain
+        lons1 = SST.xt_ocean.values
+        lats1 = SST.yt_ocean.values
+
+        # average the data by day
+        avg_SST = SST.sum(dim='time') / 24  # 24 for one day
+        avg_SSS = SSS.sum(dim='time') / 24
+
+        ################################################################################
+
+        # Set Up Figure
+        plot_area = [-115, -95, 6, 20]  # [lon1, lon2, lat1, lat2], lon is '-280'-'90' for CFSv2 model.
+
+        # levels and cbar_ticks sets up color scales
+        cmap00 = plt.cm.jet
+        cmap0 = LinearSegmentedColormap.from_list('custom', cmap00(np.linspace(0.10, 1.0, 28)))
+        cmap = cmap0
+        levels = MaxNLocator(nbins=28).tick_values(10.0, 34.0)
+        norm = BoundaryNorm(levels, cmap0.N, clip=True)
+
+        fig = plt.figure(figsize=(8.5, 7.5))
+
+        #################################################################################
+
+        # SST Map
+        ax1 = fig.add_subplot(3, 2, 1)
+        map1 = plot_map_background(plot_area=plot_area, ax=ax1)
+        H1 = plt.pcolormesh(lons1, lats1, avg_SST, cmap=cmap, norm=norm)
+
+        # Plots tracks on top graph
+        plt.plot(trajectory['lon'], trajectory['lat'], color='dimgray', linewidth=4.0)
+        # plt.text(trajectory['lon'][0], trajectory['lat'][0], 'A', color='gray')
+        # plt.text(trajectory['lon'][143], trajectory['lat'][143], 'A\'', color='gray')  # Change if distance changes
+
+        plt.plot(trajectory2['lon'], trajectory2['lat'], 'k', linewidth=4.0)
+        # plt.text(trajectory2['lon'][0], trajectory2['lat'][0], 'B', color='k')
+        # plt.text(trajectory2['lon'][143], trajectory2['lat'][143], 'B\'', color='k')
+
+        cbar = plt.colorbar(H1)
+        cbar.set_ticks(np.arange(12, 34, 4))
+
+        ax1.set_title('Temperature (\N{DEGREE SIGN}C)')
+
+        # SST Transect SD1
+        ax3 = fig.add_subplot(3, 2, 3)
+
+        # See functions from Tests2
+        H3 = plt.contourf(Vtime[:-2], F['Depths'][:-2], F['Verts'][:-2, :-2],
+                          levels=levels, cmap=cmap, norm=norm, extend='both')
+        plt.gca().invert_yaxis()  # Invert cause depths
+
+        cbar = plt.colorbar(H3)
+        cbar.set_ticks(np.arange(12, 34, 4))
+
+        ax3.set_ylim([100, 0])
+        ax3.set_xlabel('Time [h]')
+        ax3.set_ylabel('Depth [m]')
+        ax3.set_title('Temperature [A]')
+
+        #################################################################################
+
+        # SSS Map
+        cmap00 = cmocean.cm.haline
+        cmap0 = LinearSegmentedColormap.from_list('custom', cmap00(np.linspace(0.0, 1.0, 15)))
+        cmap_sss = cmap0
+        levels = MaxNLocator(nbins=15).tick_values(32.5, 36.6)
+        norm_sss = BoundaryNorm(levels, cmap0.N, clip=True)
+
+        ax2 = fig.add_subplot(3, 2, 2)
+        map2 = plot_map_background(plot_area=plot_area, ax=ax2)
+        H2 = plt.pcolormesh(lons1, lats1, avg_SSS, cmap=cmap_sss, norm=norm_sss)
+
+        plt.plot(trajectory['lon'], trajectory['lat'], color='dimgray', linewidth=4.0)
+        # plt.text(trajectory['lon'][0], trajectory['lat'][0], 'A', color='gray')
+        # plt.text(trajectory['lon'][143], trajectory['lat'][143], 'A\'', color='gray')
+
+        plt.plot(trajectory2['lon'], trajectory2['lat'], 'k', linewidth=4.0)
+        # plt.text(trajectory2['lon'][0], trajectory2['lat'][0], 'B', color='k')
+        # plt.text(trajectory2['lon'][143], trajectory2['lat'][143], 'B\'', color='k')
+
+        cbar = plt.colorbar(H2)
+        cbar.set_ticks(np.arange(33, 37, 1))
+
+        ax2.set_title('Salinity (g/kg)')
+
+        ## SSS Transect SD 1
+        ax4 = fig.add_subplot(3, 2, 4)
+        H4 = plt.contourf(Vtime[:-2], G['Depths'][:-2], G['Verts'][:-2, :-2], levels=levels, cmap=cmap_sss,
+                          norm=norm_sss, extend='both')
+        plt.gca().invert_yaxis()
+
+        cbar = plt.colorbar(H4)
+        cbar.set_ticks(np.arange(33, 37, 1))
+
+        ax4.set_ylim([100, 0])
+        ax4.set_xlabel('Time [h]')
+        ax4.set_title('Salinity [A]')
+
+        ###########################################################################
+
+        # Plot 1 continued
+        # Second Set of Saildrones
+
+        # SST Transect SD 2
+        ax5 = fig.add_subplot(3, 2, 5)
+
+        cmap00 = plt.cm.jet
+        cmap0 = LinearSegmentedColormap.from_list('custom', cmap00(np.linspace(0.10, 1.0, 28)))
+        cmap = cmap0
+        levels = MaxNLocator(nbins=28).tick_values(10.0, 34.0)
+        norm = BoundaryNorm(levels, cmap0.N, clip=True)
+
+        H5 = plt.contourf(Vtime[:-2], H['Depths'][:-2], H['Verts'][:-2, :-2], levels=levels, cmap=cmap, norm=norm,
+                          extend='both')
+        plt.gca().invert_yaxis()
+
+        cbar = plt.colorbar(H5)
+        cbar.set_ticks(np.arange(12, 34, 4))
+
+        ax5.set_ylim([100, 0])
+        ax5.set_xlabel('Time [h]')
+        ax5.set_ylabel('Depth [m]')
+        ax5.set_title('Temperature [B]')
+
+        ## SSS Transect SD 2
+        cmap00 = cmocean.cm.haline
+        cmap0 = LinearSegmentedColormap.from_list('custom', cmap00(np.linspace(0.0, 1.0, 15)))
+        cmap_sss = cmap0
+        levels = MaxNLocator(nbins=15).tick_values(32.5, 36.1)
+        norm_sss = BoundaryNorm(levels, cmap0.N, clip=True)
+
+        ax6 = fig.add_subplot(3, 2, 6)
+        H6 = plt.contourf(Vtime[:-2], I['Depths'][:-2], I['Verts'][:-2, :-2], levels=levels
+                          , cmap=cmap_sss
+                          , norm=norm_sss
+                          , extend='both')
+        plt.gca().invert_yaxis()
+
+        cbar = plt.colorbar(H4)
+        cbar.set_ticks(np.arange(33, 36.5, .5))
+
+        ax6.set_ylim([100, 0])
+        ax6.set_xlabel('Time [h]')
+        ax6.set_title('Salinity [B]')
+
+        ############################################################################
+
+        plt.tight_layout()
+        plt.savefig('BBBTransects_Cahill_Merid', dpi=100, bbox_inches='tight')
+
+        ############################################
+        ############################################
+
+        # Plot 2 (Surface and Latent Heat Flux)
+
+        # Import data
+        param1 = 'swflx'
+        param2 = 'evap_heat'
+
+        # Read in Vertical Profiles
+        F = XYT_NonDepth_1VAR_trajectory(param1, ds, lon_slice, lat_slice, time_slice, trajectory)
+        G = XYT_NonDepth_1VAR_trajectory(param2, ds, lon_slice, lat_slice, time_slice, trajectory)
+        H = XYT_NonDepth_1VAR_trajectory(param1, ds, lon_slice, lat_slice, time_slice, trajectory2)
+        I = XYT_NonDepth_1VAR_trajectory(param2, ds, lon_slice, lat_slice, time_slice, trajectory2)
+
+        #################################################################################
+
+        # Day 1 Data
+
+        # Get data, selecting time, depth, lat/lon slice
+        SHflux = ds[param1].sel(time=time_slice1)
+        LHflux = ds[param2].sel(time=time_slice1)
+
+        # Specify longitude and latitude values for chosen domain
+        lons1 = SHflux.xt_ocean.values
+        lats1 = SHflux.yt_ocean.values
+
+        # average the data by day
+        avg_SHflux = SHflux.sum(dim='time') / 24  # 24 for one day
+        avg_LHflux = LHflux.sum(dim='time') / 24
+
+        ################################################################################
+
+        # Set Up Figure
+        plot_area = [-115, -95, 6, 20]  # [lon1, lon2, lat1, lat2], lon is '-280'-'90' for M0M model.
+
+        cmap00 = plt.cm.jet
+        cmap0 = LinearSegmentedColormap.from_list('custom', cmap00(np.linspace(0.10, 1.0, 28)))
+        cmap = cmap0
+        levels = MaxNLocator(nbins=28).tick_values(-20, 320.0)
+        norm = BoundaryNorm(levels, cmap0.N, clip=True)
+
+        fig = plt.figure(figsize=(8.5, 7.5))
+
+        # SH Flux Map
+        ax1 = fig.add_subplot(2, 2, 1)
+        map1 = plot_map_background(plot_area=plot_area, ax=ax1)
+
+        H1 = plt.pcolormesh(lons1, lats1, avg_SHflux, cmap=cmap, norm=norm)
+
+        plt.plot(trajectory['lon'], trajectory['lat'], color='dimgray', linewidth=4.0)
+        # plt.text(trajectory['lon'][0], trajectory['lat'][0], 'A', color='gray')
+        # plt.text(trajectory['lon'][143], trajectory['lat'][143], 'A\'', color='gray')
+
+        plt.plot(trajectory2['lon'], trajectory2['lat'], 'k', linewidth=4.0)
+        # plt.text(trajectory2['lon'][0], trajectory2['lat'][0], 'B', color='k')
+        # plt.text(trajectory2['lon'][143], trajectory2['lat'][143], 'B\'', color='k')
+
+        cbar = plt.colorbar(H1)
+        cbar.set_ticks(np.arange(0, 350, 50))
+
+        ax1.set_title('Surface Heat Flux [$W/m^2$]')
+
+        # SH Flux Transect
+        ax3 = fig.add_subplot(2, 2, 3)
+
+        H3 = plt.plot(Vtime[:-2], F['Values'][:-2], label='Path A')
+        H5 = plt.plot(Vtime[:-2], H['Values'][:-2], label='Path B')
+
+        plt.legend()
+
+        # Next two lines for color limits
+        ax3.set_ylim([-25, 1000])
+        ax3.yaxis.set_ticks(np.arange(0, 1000, 200))
+        ax3.set_xlabel('Time [h]')
+        ax3.set_ylabel('Flux [$W/m^2$]')
+        ax3.set_title('Surface Heat Flux')
+
+        # LH Flux Map
+        levels2 = MaxNLocator(nbins=28).tick_values(-270, 20)
+        norm2 = BoundaryNorm(levels2, cmap0.N, clip=True)
+
+        ax2 = fig.add_subplot(2, 2, 2)
+        map2 = plot_map_background(plot_area=plot_area, ax=ax2)
+
+        H2 = plt.pcolormesh(lons1, lats1, avg_LHflux, cmap=cmap, norm=norm2)
+
+        plt.plot(trajectory['lon'], trajectory['lat'], color='dimgray', linewidth=4.0)
+        # plt.text(trajectory['lon'][0], trajectory['lat'][0], 'A', color='gray')
+        # plt.text(trajectory['lon'][143], trajectory['lat'][143], 'A\'', color='gray')
+
+        plt.plot(trajectory2['lon'], trajectory2['lat'], 'k', linewidth=4.0)
+        # plt.text(trajectory2['lon'][0], trajectory2['lat'][0], 'B', color='k')
+        # plt.text(trajectory2['lon'][143], trajectory2['lat'][143], 'B\'', color='k')
+
+        cbar = plt.colorbar(H2)
+        cbar.set_ticks(np.arange(-250, 50, 50))
+
+        ax2.set_title('Latent Heat Flux [$W/m^2$]')
+
+        # LH Flux Transect
+        ax4 = fig.add_subplot(2, 2, 4)
+        H4 = plt.plot(Vtime[:-2], G['Values'][:-2], label='Path A')
+        H6 = plt.plot(Vtime[:-2], I['Values'][:-2], label='Path B')
+
+        plt.legend()
+
+        ax4.set_ylim([-265, 0])
+        ax4.yaxis.set_ticks(np.arange(-250, 0, 50))
+        ax4.set_xlabel('Time [h]')
+        ax4.set_ylabel('Flux [$W/m^2$]')
+        ax4.set_title('Latent Heat Flux')
+
+        ##########################################################################
+
+        plt.tight_layout()
+        plt.savefig('BBBFlux_Transects_Cahill_Merid', dpi=100, bbox_inches='tight')
+
+        ##########################################################################
+        ##########################################################################
+
+        # Plot 3 (Currents and Wind Speeds)
+
+        # Import data
+        param1 = 'u'
+        param2 = 'v'
+        param3 = 'tau_x'
+        param4 = 'tau_y'
+
+        # Read in Vertical Profiles
+        F = Depth_2VAR_trajectory(param1, param2, ds, depth, lon_slice, lat_slice, time_slice, trajectory)
+        G = XYU_NonDepth_2VAR_trajectory(param3, param4, ds, lon_slice, lat_slice, time_slice, trajectory)
+        H = Depth_2VAR_trajectory(param1, param2, ds, depth, lon_slice, lat_slice, time_slice, trajectory2)
+        I = XYU_NonDepth_2VAR_trajectory(param3, param4, ds, lon_slice, lat_slice, time_slice, trajectory2)
+
+        ##################################################################
+
+        # Get data, selecting time, depth, lat/lon slice
+        datax = ds[param1].sel(time=time_slice1)
+        datay = ds[param2].sel(time=time_slice1)
+
+        datax = np.square(datax)
+        datay = np.square(datay)
+        data = np.add(datax, datay)
+        Curr = np.sqrt(data)
+        Curr = Curr[:, 0, :, :]
+
+        # Get time range for WS
+        lat_slice1 = slice(5, 25)
+        SS1 = SS.sel(time=time_slice1)
+
+        # Specify longitude and latitude values for chosen domain
+        lons1 = Curr.xu_ocean.values
+        lats1 = Curr.yu_ocean.values
+        WSlon = SS1.lon_126.values
+        WSlat = SS1.lat_126.values
+
+        # average the data by day
+        avg_Curr = Curr.sum(dim='time') / 24  # 24 for one day
+        avg_WS = (SS1.sum(dim='time') / 24) / .137  # .137 so we can convert SS back to WS
+
+        ################################################################################
+
+        # Set Up Figure
+        plot_area = [-115, -95, 6, 20]  # [lon1, lon2, lat1, lat2], lon is '-280'-'90' for M0M model.
+
+        cmap00 = plt.cm.jet
+        cmap0 = LinearSegmentedColormap.from_list('custom', cmap00(np.linspace(0.10, 1.0, 28)))
+        cmap = cmap0
+        levels = MaxNLocator(nbins=28).tick_values(-.1, .8)
+        norm = BoundaryNorm(levels, cmap0.N, clip=True)
+
+        fig = plt.figure(figsize=(8.5, 7.5))
+
+        # Current Map
+        ax1 = fig.add_subplot(2, 2, 1)
+        map1 = plot_map_background(plot_area=plot_area, ax=ax1)
+
+        H1 = plt.pcolormesh(lons1, lats1, avg_Curr, cmap=cmap, norm=norm)
+        plt.plot(trajectory['lon'], trajectory['lat'], color='gray', linewidth=4.0)
+        # plt.text(trajectory['lon'][0], trajectory['lat'][0], 'A', color='gray')
+        # plt.text(trajectory['lon'][4], trajectory['lat'][4], 'A\'', color='gray')
+
+        plt.plot(trajectory2['lon'], trajectory2['lat'], 'k', linewidth=4.0)
+        # plt.text(trajectory2['lon'][0], trajectory2['lat'][0], 'B', color='k')
+        # plt.text(trajectory2['lon'][4], trajectory2['lat'][4], 'B\'', color='k')
+
+        cbar = plt.colorbar(H1)
+        cbar.set_ticks(np.arange(0, .8, .1))
+
+        ax1.set_title('Surface Current Speed [$m/s$]')
+
+        # Current Transect
+        ax3 = fig.add_subplot(2, 2, 3)
+
+        H3 = plt.plot(Vtime[:-2], F['Values'][:-2], label='Path A')
+        H5 = plt.plot(Vtime[:-2], H['Values'][:-2], label='Path B')
+
+        plt.legend()
+
+        # ax3.set_ylim([-.05, .9])
+        # ax3.yaxis.set_ticks(np.arange(0, .9, .1))
+        ax3.set_ylim([-.05, 1.4])
+        ax3.yaxis.set_ticks(np.arange(0, 1.4, .2))
+        ax3.set_xlabel('Time [h]')
+        ax3.set_ylabel('Speed [$m/s$]')
+        ax3.set_title('Surface Current Speed')
+
+        # WS Map
+        levels2 = MaxNLocator(nbins=28).tick_values(-2.5, 20)  # ******
+        norm2 = BoundaryNorm(levels2, cmap0.N, clip=True)
+
+        ax2 = fig.add_subplot(2, 2, 2)
+        map2 = plot_map_background(plot_area=plot_area, ax=ax2)
+
+        H2 = plt.pcolormesh(WSlon, WSlat, avg_WS, cmap=cmap, norm=norm2)
+
+        plt.plot(trajectory['lon'], trajectory['lat'], color='gray', linewidth=4.0)
+        # plt.text(trajectory['lon'][0], trajectory['lat'][0], 'A', color='gray')
+        # plt.text(trajectory['lon'][4], trajectory['lat'][4], 'A\'', color='gray')
+
+        plt.plot(trajectory2['lon'], trajectory2['lat'], 'k', linewidth=4.0)
+        # plt.text(trajectory2['lon'][0], trajectory2['lat'][0], 'B', color='k')
+        # plt.text(trajectory2['lon'][4], trajectory2['lat'][4], 'B\'', color='k')
+
+        # cbar = plt.colorbar(H2)
+        # cbar.set_ticks(np.arange(0, 12.5, 2.5))  # ******
+        cbar = plt.colorbar(H2)
+        cbar.set_ticks(np.arange(0, 20, 2.5))  # ******
+
+        ax2.set_title('Wind Speed [$m/s$]')
+
+        ## WS Transect
+
+        # Get WS values from trajectory
+
+        # Create blank array to fill with WS values
+        WSvalusA = []
+        x = 0
+
+        # Fill in WS values by using trajectory locations (we use nearest b/c nearest are the actual and this works so whatever)
+        while x < (((Stime + 1) * 2) + 1):  # Same eqn as vtimes (not really sure why it's exactly that but it works)
+            TEST = lookupNearest(x, trajectory['lon'][x], trajectory['lat'][x])
+            WSvalusA = np.concatenate((WSvalusA, [TEST.values]))  # add old array(old values) to new array(new value)
+            x = x + 1
+
+        WSvalusB = []
+        x2 = 0
+
+        while x2 < (((Stime + 1) * 2) + 1):
+            TEST2 = lookupNearest(x2, trajectory2['lon'][x2], trajectory2['lat'][x2])
+            WSvalusB = np.concatenate((WSvalusB, [TEST2.values]))
+            x2 = x2 + 1
+
+        WSvalusA = WSvalusA / .137  # .137 so we can convert SS back to WS
+        WSvalusB = WSvalusB / .137
+
+        ax4 = fig.add_subplot(2, 2, 4)
+        H4 = plt.plot(Vtime[:-2], WSvalusA[:-2], label='Path A')
+        H6 = plt.plot(Vtime[:-2], WSvalusB[:-2], label='Path B')
+
+        plt.legend()
+
+        ax4.set_ylim([-.1, 28])  # *******
+        ax4.yaxis.set_ticks(np.arange(0, 25, 4))
+        ax4.set_ylabel('Speed [$m/s$]')
+        ax4.set_xlabel('Time [h]')
+        ax4.set_title('Wind Speed')
+
+        ##########################################################################
+
+        plt.tight_layout()
+        plt.savefig('BBBSpeeds_Transects_Cahill_Merid', dpi=100, bbox_inches='tight')
+
+        ##########################################################################
+        ##########################################################################
+
+        # Plot 4: Precip and Ocean Heights
+
+        # Import data
+        param1 = 'lprec'
+        param2 = 'eta_t'
+
+        # Read in Vertical Profiles
+        F = XYT_NonDepth_1VAR_trajectory(param1, ds, lon_slice, lat_slice, time_slice, trajectory)
+        G = XYT_NonDepth_1VAR_trajectory(param2, ds, lon_slice, lat_slice, time_slice, trajectory)
+        H = XYT_NonDepth_1VAR_trajectory(param1, ds, lon_slice, lat_slice, time_slice, trajectory2)
+        I = XYT_NonDepth_1VAR_trajectory(param2, ds, lon_slice, lat_slice, time_slice, trajectory2)
+
+        # Get data, selecting time, depth, lat/lon slice
+        precip = ds[param1].sel(time=time_slice1)
+        height = ds[param2].sel(time=time_slice1)
+
+        # Specify longitude and latitude values for chosen domain
+        lons1 = precip.xt_ocean.values
+        lats1 = precip.yt_ocean.values
+
+        # average the data by day
+        avg_Curr = precip.sum(dim='time') / 24  # 24 for one day
+        avg_WS = height.sum(dim='time') / 24
+
+        ################################################################################
+
+        # Set Up Figure
+        plot_area = [-115, -95, 6, 20]  # [lon1, lon2, lat1, lat2], lon is '-280'-'90' for M0M model.
+
+        cmap00 = plt.cm.jet
+        cmap0 = LinearSegmentedColormap.from_list('custom', cmap00(np.linspace(0.10, 1.0, 28)))
+        cmap = cmap0
+        levels = MaxNLocator(nbins=28).tick_values(-.0005, .0025)
+        norm = BoundaryNorm(levels, cmap0.N, clip=True)
+
+        fig = plt.figure(figsize=(8.5, 7.5))
+
+        # Precip Map
+        ax1 = fig.add_subplot(2, 2, 1)
+        map1 = plot_map_background(plot_area=plot_area, ax=ax1)
+
+        H1 = plt.pcolormesh(lons1, lats1, avg_Curr, cmap=cmap, norm=norm)
+
+        plt.plot(trajectory['lon'], trajectory['lat'], color='dimgray', linewidth=4.0)
+        # plt.text(trajectory['lon'][0], trajectory['lat'][0], 'A', color='gray')
+        # plt.text(trajectory['lon'][143], trajectory['lat'][143], 'A\'', color='gray')
+
+        plt.plot(trajectory2['lon'], trajectory2['lat'], 'k', linewidth=4.0)
+        # plt.text(trajectory2['lon'][0], trajectory2['lat'][0], 'B', color='k')
+        # plt.text(trajectory2['lon'][143], trajectory2['lat'][143], 'B\'', color='k')
+
+        cbar = plt.colorbar(H1)
+        cbar.set_ticks(np.arange(0, .0025, .0005))
+
+        ax1.set_title('Daily Precipitation [$kg/m^2s$]')
+
+        # Precip Transect
+        ax3 = fig.add_subplot(2, 2, 3)
+
+        H3 = plt.plot(Vtime[:-2], F['Values'][:-2], label='Path A')
+        H5 = plt.plot(Vtime[:-2], H['Values'][:-2], label='Path B')
+
+        plt.legend()
+
+        ax3.set_ylim([-.0001, .0012])
+        ax3.yaxis.set_ticks(np.arange(0, .0012, .0002))
+        ax3.set_xlabel('Time [h]')
+        ax3.set_ylabel('Rainfall [$kg/m^2s$]')
+        ax3.set_title('Precipitation')
+
+        # Height Map
+        levels2 = MaxNLocator(nbins=28).tick_values(-.1, .6)
+        norm2 = BoundaryNorm(levels2, cmap0.N, clip=True)
+
+        ax2 = fig.add_subplot(2, 2, 2)
+        map2 = plot_map_background(plot_area=plot_area, ax=ax2)
+
+        H2 = plt.pcolormesh(lons1, lats1, avg_WS, cmap=cmap, norm=norm2)
+
+        plt.plot(trajectory['lon'], trajectory['lat'], color='dimgray', linewidth=4.0)
+        # plt.text(trajectory['lon'][0], trajectory['lat'][0], 'A', color='gray')
+        # plt.text(trajectory['lon'][143], trajectory['lat'][143], 'A\'', color='gray')
+
+        plt.plot(trajectory2['lon'], trajectory2['lat'], 'k', linewidth=4.0)
+        # plt.text(trajectory2['lon'][0], trajectory2['lat'][0], 'B', color='k')
+        # plt.text(trajectory2['lon'][143], trajectory2['lat'][143], 'B\'', color='k')
+
+        cbar = plt.colorbar(H2)
+        cbar.set_ticks(np.arange(0, .6, .1))
+
+        ax2.set_title('Ocean Surface Height [m]')
+
+        # Height Transect
+        ax4 = fig.add_subplot(2, 2, 4)
+        H4 = plt.plot(Vtime[:-2], G['Values'][:-2], label='Path A')
+        H6 = plt.plot(Vtime[:-2], I['Values'][:-2], label='Path B')
+
+        plt.legend()
+
+        # ax4.set_ylim([.065, .3])
+        # ax4.yaxis.set_ticks(np.arange(.075, .3, .025))
+        ax4.set_ylim([.04, .4])
+        ax4.yaxis.set_ticks(np.arange(.05, .4, .05))
+        ax4.set_ylabel('Height [m]')
+        ax4.set_xlabel('Time [h]')
+        ax4.set_title('Ocean Surface Height')
+
+        ##########################################################################
+
+        plt.tight_layout()
+        plt.savefig('BBBWater_Transects_Cahill_Merid', dpi=100, bbox_inches='tight')
+
+    elif Route is 'Zonal':
+        ##### Trajectories
+
+        # Zonal Sectioning (Saildrone 1)
+
+        # (Saildrone 1)
+        # Starting lat and lon values
+        trajectory = {'lon': [SD1_start_lon], 'lat': [SD1_start_lat]}
+
+        lon = SS.lon_126.values
+        lat = SS.lat_126.values
+
+        def lookupNearest(time_pos, lon0, lat0):
+            loni = np.abs(lon - lon0).argmin()
+            lati = np.abs(lat - lat0).argmin()
+            return SS[time_pos, lati, loni]
+
+        # Use ^ function to find closest initial location and wind speed
+        start_traj = lookupNearest(0, trajectory['lon'], trajectory['lat'])
+
+        # Starting time value
+        trajectory = {'datetime': [dt.datetime(2003, 9, 5, 0, 0, 0)], 'lon': [float(start_traj.lon_126.values)],
+                      'lat': [float(start_traj.lat_126.values)]}
+
+        #            duration_hours, direction_ccw_from_east, SS, start_traj, prev_trajectory=None):
+        trajectory = calc_trajNEWERgrib(Stime, 0.0, SS, start_traj, prev_trajectory=trajectory)
+        start_traj = lookupNearest(Stime, trajectory['lon'][-1], trajectory['lat'][-1])  # from ^ traj last point
+        trajectory = calc_trajNEWERgrib(Stime, 180.0, SS, start_traj, prev_trajectory=trajectory)
+
+        # (Saildrone 2)
+        # Starting lat and lon values
+        trajectory2 = {'lon': [SD2_start_lon], 'lat': [SD2_start_lat]}
+
+        lon = SS.lon_126.values
+        lat = SS.lat_126.values
+
+        # Use ^ function to find closest initial location and wind speed
+        start_traj2 = lookupNearest(0, trajectory2['lon'], trajectory2['lat'])
+
+        # Starting time value
+        trajectory2 = {'datetime': [dt.datetime(2003, 9, 5, 0, 0, 0)], 'lon': [float(start_traj2.lon_126.values)],
+                       'lat': [float(start_traj2.lat_126.values)]}
+
+        #           duration_hours, direction_ccw_from_east, SS, start_traj, prev_trajectory=None):
+        trajectory2 = calc_trajNEWERgrib(Stime, 0.0, SS, start_traj2, prev_trajectory=trajectory2)
+        start_traj2 = lookupNearest(Stime, trajectory2['lon'][-1], trajectory2['lat'][-1])  # from ^ traj last point
+        trajectory2 = calc_trajNEWERgrib(Stime, 180.0, SS, start_traj2, prev_trajectory=trajectory2)
+
+        ###############################################################################
+
+        # Import data
+
+        # Open dataset via xarray
+        ds = xr.open_mfdataset('D:/CFSv2/Tests/*.nc')
+
+        # Convert time from object to datetime64
+        time = ds.variables['time'][:]
+        datetimeindex = ds.indexes['time'].to_datetimeindex()  # converts to python friendly 'datetime'
+        ds['time'] = datetimeindex
+
+        # Other Slices
+        time_slice = slice(start_time, end_time)
+        lat_slice = slice(6, 20)
+        lon_slice = slice(-115, -95)
+        depth_slice = slice(0, 150)
+        depth = 0
+
+        # Times in hours (Product 288hrs/24hrs = 12days (based on time slices)
+        Vtime = np.arange(0, (((Stime + 1) * 2) + 1), 1)
+
+        ########################################################################
+
+        # Plot 1 (Temp and Salinity)
+
+        # Read in Vertical Profiles (var, data, ...)
+        F = vertical_prof_trajectory('temp', ds, depth_slice, lon_slice, lat_slice, time_slice, trajectory)
+        G = vertical_prof_trajectory('salt', ds, depth_slice, lon_slice, lat_slice, time_slice, trajectory)
+        H = vertical_prof_trajectory('temp', ds, depth_slice, lon_slice, lat_slice, time_slice, trajectory2)
+        I = vertical_prof_trajectory('salt', ds, depth_slice, lon_slice, lat_slice, time_slice, trajectory2)
+
+        plt.style.use('dark_background')
+
+        # Day 1 Data
+        paramt = 'temp'
+        params = 'salt'
+        depth2 = 0.5
+
+        # Start and end time for day 1
+        ST = start_time
+        ET = start_time.replace("00:00:00", "23:00:00")  # only averages until end of day - not a full 24 hour avg
+        time_slice1 = slice(ST, ET)
+
+        # Get data, selecting time, depth, lat/lon slice
+        SST = ds[paramt].sel(st_ocean=depth2, time=time_slice1)
+        SSS = ds[params].sel(st_ocean=depth2, time=time_slice1)
+
+        # Specify longitude and latitude values for chosen domain
+        lons1 = SST.xt_ocean.values
+        lats1 = SST.yt_ocean.values
+
+        # average the data by day
+        avg_SST = SST.sum(dim='time') / 24  # 24 for one day
+        avg_SSS = SSS.sum(dim='time') / 24
+
+        ################################################################################
+
+        # Set Up Figure
+        plot_area = [-115, -95, 6, 20]  # [lon1, lon2, lat1, lat2], lon is '-280'-'90' for CFSv2 model.
+
+        # levels and cbar_ticks sets up color scales
+        cmap00 = plt.cm.jet
+        cmap0 = LinearSegmentedColormap.from_list('custom', cmap00(np.linspace(0.10, 1.0, 28)))
+        cmap = cmap0
+        levels = MaxNLocator(nbins=28).tick_values(10.0, 34.0)
+        norm = BoundaryNorm(levels, cmap0.N, clip=True)
+
+        fig = plt.figure(figsize=(8.5, 7.5))
+
+        #################################################################################
+
+        # SST Map
+        ax1 = fig.add_subplot(3, 2, 1)
+        map1 = plot_map_background(plot_area=plot_area, ax=ax1)
+        H1 = plt.pcolormesh(lons1, lats1, avg_SST, cmap=cmap, norm=norm)
+
+        # Plots tracks on top graph
+        plt.plot(trajectory['lon'], trajectory['lat'], color='dimgray', linewidth=4.0)
+        # plt.text(trajectory['lon'][0], trajectory['lat'][0], 'A', color='gray')
+        # plt.text(trajectory['lon'][143], trajectory['lat'][143], 'A\'', color='gray')  # Change if distance changes
+
+        plt.plot(trajectory2['lon'], trajectory2['lat'], 'k', linewidth=4.0)
+        # plt.text(trajectory2['lon'][0], trajectory2['lat'][0], 'B', color='k')
+        # plt.text(trajectory2['lon'][143], trajectory2['lat'][143], 'B\'', color='k')
+
+        cbar = plt.colorbar(H1)
+        cbar.set_ticks(np.arange(12, 34, 4))
+
+        ax1.set_title('Temperature (\N{DEGREE SIGN}C)')
+
+        # SST Transect SD1
+        ax3 = fig.add_subplot(3, 2, 3)
+
+        # See functions from Tests2
+        H3 = plt.contourf(Vtime[:-2], F['Depths'][:-2], F['Verts'][:-2, :-2], levels=levels, cmap=cmap, norm=norm,
+                          extend='both')
+        plt.gca().invert_yaxis()  # Invert cause depths
+
+        cbar = plt.colorbar(H3)
+        cbar.set_ticks(np.arange(12, 34, 4))
+
+        ax3.set_ylim([100, 0])
+        ax3.set_xlabel('Time [h]')
+        ax3.set_ylabel('Depth [m]')
+        ax3.set_title('Temperature [A]')
+
+        #################################################################################
+
+        # SSS Map
+        cmap00 = cmocean.cm.haline
+        cmap0 = LinearSegmentedColormap.from_list('custom', cmap00(np.linspace(0.0, 1.0, 15)))
+        cmap_sss = cmap0
+        levels = MaxNLocator(nbins=15).tick_values(32.5, 36.6)
+        norm_sss = BoundaryNorm(levels, cmap0.N, clip=True)
+
+        ax2 = fig.add_subplot(3, 2, 2)
+        map2 = plot_map_background(plot_area=plot_area, ax=ax2)
+        H2 = plt.pcolormesh(lons1, lats1, avg_SSS, cmap=cmap_sss, norm=norm_sss)
+
+        plt.plot(trajectory['lon'], trajectory['lat'], color='dimgray', linewidth=4.0)
+        # plt.text(trajectory['lon'][0], trajectory['lat'][0], 'A', color='gray')
+        # plt.text(trajectory['lon'][143], trajectory['lat'][143], 'A\'', color='gray')
+
+        plt.plot(trajectory2['lon'], trajectory2['lat'], 'k', linewidth=4.0)
+        # plt.text(trajectory2['lon'][0], trajectory2['lat'][0], 'B', color='k')
+        # plt.text(trajectory2['lon'][143], trajectory2['lat'][143], 'B\'', color='k')
+
+        cbar = plt.colorbar(H2)
+        cbar.set_ticks(np.arange(33, 37, 1))
+
+        ax2.set_title('Salinity (g/kg)')
+
+        ## SSS Transect SD 1
+        ax4 = fig.add_subplot(3, 2, 4)
+        H4 = plt.contourf(Vtime[:-2], G['Depths'][:-2], G['Verts'][:-2, :-2], levels=levels, cmap=cmap_sss,
+                          norm=norm_sss, extend='both')
+        plt.gca().invert_yaxis()
+
+        cbar = plt.colorbar(H4)
+        cbar.set_ticks(np.arange(33, 37, 1))
+
+        ax4.set_ylim([100, 0])
+        ax4.set_xlabel('Time [h]')
+        ax4.set_title('Salinity [A]')
+
+        ###########################################################################
+
+        # Plot 1 continued
+        # Second Set of Saildrones
+
+        # SST Transect SD 2
+        ax5 = fig.add_subplot(3, 2, 5)
+
+        cmap00 = plt.cm.jet
+        cmap0 = LinearSegmentedColormap.from_list('custom', cmap00(np.linspace(0.10, 1.0, 28)))
+        cmap = cmap0
+        levels = MaxNLocator(nbins=28).tick_values(10.0, 34.0)
+        norm = BoundaryNorm(levels, cmap0.N, clip=True)
+
+        H5 = plt.contourf(Vtime[:-2], H['Depths'][:-2], H['Verts'][:-2, :-2], levels=levels, cmap=cmap, norm=norm,
+                          extend='both')
+        plt.gca().invert_yaxis()
+
+        cbar = plt.colorbar(H5)
+        cbar.set_ticks(np.arange(12, 34, 4))
+
+        ax5.set_ylim([100, 0])
+        ax5.set_xlabel('Time [h]')
+        ax5.set_ylabel('Depth [m]')
+        ax5.set_title('Temperature [B]')
+
+        ## SSS Transect SD 2
+        cmap00 = cmocean.cm.haline
+        cmap0 = LinearSegmentedColormap.from_list('custom', cmap00(np.linspace(0.0, 1.0, 15)))
+        cmap_sss = cmap0
+        levels = MaxNLocator(nbins=15).tick_values(32.5, 36.1)
+        norm_sss = BoundaryNorm(levels, cmap0.N, clip=True)
+
+        ax6 = fig.add_subplot(3, 2, 6)
+        H6 = plt.contourf(Vtime[:-2], I['Depths'][:-2], I['Verts'][:-2, :-2], levels=levels
+                          , cmap=cmap_sss
+                          , norm=norm_sss
+                          , extend='both')
+        plt.gca().invert_yaxis()
+
+        cbar = plt.colorbar(H4)
+        cbar.set_ticks(np.arange(33, 36.5, .5))
+
+        ax6.set_ylim([100, 0])
+        ax6.set_xlabel('Time [h]')
+        ax6.set_title('Salinity [B]')
+
+        ############################################################################
+
+        plt.tight_layout()
+        plt.savefig('BBBTransects_Cahill_Zonal', dpi=100, bbox_inches='tight')
+
+        ############################################
+        ############################################
+
+        # Plot 2 (Surface and Latent Heat Flux)
+
+        # Import data
+        param1 = 'swflx'
+        param2 = 'evap_heat'
+
+        # Read in Vertical Profiles
+        F = XYT_NonDepth_1VAR_trajectory(param1, ds, lon_slice, lat_slice, time_slice, trajectory)
+        G = XYT_NonDepth_1VAR_trajectory(param2, ds, lon_slice, lat_slice, time_slice, trajectory)
+        H = XYT_NonDepth_1VAR_trajectory(param1, ds, lon_slice, lat_slice, time_slice, trajectory2)
+        I = XYT_NonDepth_1VAR_trajectory(param2, ds, lon_slice, lat_slice, time_slice, trajectory2)
+
+        #################################################################################
+
+        # Day 1 Data
+
+        # Get data, selecting time, depth, lat/lon slice
+        SHflux = ds[param1].sel(time=time_slice1)
+        LHflux = ds[param2].sel(time=time_slice1)
+
+        # Specify longitude and latitude values for chosen domain
+        lons1 = SHflux.xt_ocean.values
+        lats1 = SHflux.yt_ocean.values
+
+        # average the data by day
+        avg_SHflux = SHflux.sum(dim='time') / 24  # 24 for one day
+        avg_LHflux = LHflux.sum(dim='time') / 24
+
+        ################################################################################
+
+        # Set Up Figure
+        plot_area = [-115, -95, 6, 20]  # [lon1, lon2, lat1, lat2], lon is '-280'-'90' for M0M model.
+
+        cmap00 = plt.cm.jet
+        cmap0 = LinearSegmentedColormap.from_list('custom', cmap00(np.linspace(0.10, 1.0, 28)))
+        cmap = cmap0
+        levels = MaxNLocator(nbins=28).tick_values(-20, 320.0)
+        norm = BoundaryNorm(levels, cmap0.N, clip=True)
+
+        fig = plt.figure(figsize=(8.5, 7.5))
+
+        # SH Flux Map
+        ax1 = fig.add_subplot(2, 2, 1)
+        map1 = plot_map_background(plot_area=plot_area, ax=ax1)
+
+        H1 = plt.pcolormesh(lons1, lats1, avg_SHflux, cmap=cmap, norm=norm)
+
+        plt.plot(trajectory['lon'], trajectory['lat'], color='dimgray', linewidth=4.0)
+        # plt.text(trajectory['lon'][0], trajectory['lat'][0], 'A', color='gray')
+        # plt.text(trajectory['lon'][143], trajectory['lat'][143], 'A\'', color='gray')
+
+        plt.plot(trajectory2['lon'], trajectory2['lat'], 'k', linewidth=4.0)
+        # plt.text(trajectory2['lon'][0], trajectory2['lat'][0], 'B', color='k')
+        # plt.text(trajectory2['lon'][143], trajectory2['lat'][143], 'B\'', color='k')
+
+        cbar = plt.colorbar(H1)
+        cbar.set_ticks(np.arange(0, 350, 50))
+
+        ax1.set_title('Surface Heat Flux [$W/m^2$]')
+
+        # SH Flux Transect
+        ax3 = fig.add_subplot(2, 2, 3)
+
+        H3 = plt.plot(Vtime[:-2], F['Values'][:-2], label='Path A')
+        H5 = plt.plot(Vtime[:-2], H['Values'][:-2], label='Path B')
+
+        plt.legend()
+
+        # Next two lines for color limits
+        ax3.set_ylim([-25, 1000])
+        ax3.yaxis.set_ticks(np.arange(0, 1000, 200))
+        ax3.set_xlabel('Time [h]')
+        ax3.set_ylabel('Flux [$W/m^2$]')
+        ax3.set_title('Surface Heat Flux')
+
+        # LH Flux Map
+        levels2 = MaxNLocator(nbins=28).tick_values(-270, 20)
+        norm2 = BoundaryNorm(levels2, cmap0.N, clip=True)
+
+        ax2 = fig.add_subplot(2, 2, 2)
+        map2 = plot_map_background(plot_area=plot_area, ax=ax2)
+
+        H2 = plt.pcolormesh(lons1, lats1, avg_LHflux, cmap=cmap, norm=norm2)
+
+        plt.plot(trajectory['lon'], trajectory['lat'], color='dimgray', linewidth=4.0)
+        # plt.text(trajectory['lon'][0], trajectory['lat'][0], 'A', color='gray')
+        # plt.text(trajectory['lon'][143], trajectory['lat'][143], 'A\'', color='gray')
+
+        plt.plot(trajectory2['lon'], trajectory2['lat'], 'k', linewidth=4.0)
+        # plt.text(trajectory2['lon'][0], trajectory2['lat'][0], 'B', color='k')
+        # plt.text(trajectory2['lon'][143], trajectory2['lat'][143], 'B\'', color='k')
+
+        cbar = plt.colorbar(H2)
+        cbar.set_ticks(np.arange(-250, 50, 50))
+
+        ax2.set_title('Latent Heat Flux [$W/m^2$]')
+
+        # LH Flux Transect
+        ax4 = fig.add_subplot(2, 2, 4)
+        H4 = plt.plot(Vtime[:-2], G['Values'][:-2], label='Path A')
+        H6 = plt.plot(Vtime[:-2], I['Values'][:-2], label='Path B')
+
+        plt.legend()
+
+        ax4.set_ylim([-265, 0])
+        ax4.yaxis.set_ticks(np.arange(-250, 0, 50))
+        ax4.set_xlabel('Time [h]')
+        ax4.set_ylabel('Flux [$W/m^2$]')
+        ax4.set_title('Latent Heat Flux')
+
+        ##########################################################################
+
+        plt.tight_layout()
+        plt.savefig('BBBFlux_Transects_Cahill_Zonal', dpi=100, bbox_inches='tight')
+
+        ##########################################################################
+        ##########################################################################
+
+        # Plot 3 (Currents and Wind Speeds)
+
+        # Import data
+        param1 = 'u'
+        param2 = 'v'
+        param3 = 'tau_x'
+        param4 = 'tau_y'
+
+        # Read in Vertical Profiles
+        F = Depth_2VAR_trajectory(param1, param2, ds, depth, lon_slice, lat_slice, time_slice, trajectory)
+        G = XYU_NonDepth_2VAR_trajectory(param3, param4, ds, lon_slice, lat_slice, time_slice, trajectory)
+        H = Depth_2VAR_trajectory(param1, param2, ds, depth, lon_slice, lat_slice, time_slice, trajectory2)
+        I = XYU_NonDepth_2VAR_trajectory(param3, param4, ds, lon_slice, lat_slice, time_slice, trajectory2)
+
+        ##################################################################
+
+        # Get data, selecting time, depth, lat/lon slice
+        datax = ds[param1].sel(time=time_slice1)
+        datay = ds[param2].sel(time=time_slice1)
+
+        datax = np.square(datax)
+        datay = np.square(datay)
+        data = np.add(datax, datay)
+        Curr = np.sqrt(data)
+        Curr = Curr[:, 0, :, :]
+
+        # Get time range for WS
+        lat_slice1 = slice(5, 25)
+        SS1 = SS.sel(time=time_slice1)
+
+        # Specify longitude and latitude values for chosen domain
+        lons1 = Curr.xu_ocean.values
+        lats1 = Curr.yu_ocean.values
+        WSlon = SS1.lon_126.values
+        WSlat = SS1.lat_126.values
+
+        # average the data by day
+        avg_Curr = Curr.sum(dim='time') / 24  # 24 for one day
+        avg_WS = (SS1.sum(dim='time') / 24) / .137  # .137 so we can convert SS back to WS
+
+        ################################################################################
+
+        # Set Up Figure
+        plot_area = [-115, -95, 6, 20]  # [lon1, lon2, lat1, lat2], lon is '-280'-'90' for M0M model.
+
+        cmap00 = plt.cm.jet
+        cmap0 = LinearSegmentedColormap.from_list('custom', cmap00(np.linspace(0.10, 1.0, 28)))
+        cmap = cmap0
+        levels = MaxNLocator(nbins=28).tick_values(-.1, .8)
+        norm = BoundaryNorm(levels, cmap0.N, clip=True)
+
+        fig = plt.figure(figsize=(8.5, 7.5))
+
+        # Current Map
+        ax1 = fig.add_subplot(2, 2, 1)
+        map1 = plot_map_background(plot_area=plot_area, ax=ax1)
+
+        H1 = plt.pcolormesh(lons1, lats1, avg_Curr, cmap=cmap, norm=norm)
+        plt.plot(trajectory['lon'], trajectory['lat'], color='gray', linewidth=4.0)
+        # plt.text(trajectory['lon'][0], trajectory['lat'][0], 'A', color='gray')
+        # plt.text(trajectory['lon'][4], trajectory['lat'][4], 'A\'', color='gray')
+
+        plt.plot(trajectory2['lon'], trajectory2['lat'], 'k', linewidth=4.0)
+        # plt.text(trajectory2['lon'][0], trajectory2['lat'][0], 'B', color='k')
+        # plt.text(trajectory2['lon'][4], trajectory2['lat'][4], 'B\'', color='k')
+
+        cbar = plt.colorbar(H1)
+        cbar.set_ticks(np.arange(0, .8, .1))
+
+        ax1.set_title('Surface Current Speed [$m/s$]')
+
+        # Current Transect
+        ax3 = fig.add_subplot(2, 2, 3)
+
+        H3 = plt.plot(Vtime[:-2], F['Values'][:-2], label='Path A')
+        H5 = plt.plot(Vtime[:-2], H['Values'][:-2], label='Path B')
+
+        plt.legend()
+
+        # ax3.set_ylim([-.05, .9])
+        # ax3.yaxis.set_ticks(np.arange(0, .9, .1))
+        ax3.set_ylim([-.05, 1.4])
+        ax3.yaxis.set_ticks(np.arange(0, 1.4, .2))
+        ax3.set_xlabel('Time [h]')
+        ax3.set_ylabel('Speed [$m/s$]')
+        ax3.set_title('Surface Current Speed')
+
+        # WS Map
+        levels2 = MaxNLocator(nbins=28).tick_values(-2.5, 20)  # ******
+        norm2 = BoundaryNorm(levels2, cmap0.N, clip=True)
+
+        ax2 = fig.add_subplot(2, 2, 2)
+        map2 = plot_map_background(plot_area=plot_area, ax=ax2)
+
+        H2 = plt.pcolormesh(WSlon, WSlat, avg_WS, cmap=cmap, norm=norm2)
+
+        plt.plot(trajectory['lon'], trajectory['lat'], color='gray', linewidth=4.0)
+        # plt.text(trajectory['lon'][0], trajectory['lat'][0], 'A', color='gray')
+        # plt.text(trajectory['lon'][4], trajectory['lat'][4], 'A\'', color='gray')
+
+        plt.plot(trajectory2['lon'], trajectory2['lat'], 'k', linewidth=4.0)
+        # plt.text(trajectory2['lon'][0], trajectory2['lat'][0], 'B', color='k')
+        # plt.text(trajectory2['lon'][4], trajectory2['lat'][4], 'B\'', color='k')
+
+        cbar = plt.colorbar(H2)
+        cbar.set_ticks(np.arange(0, 20, 2.5))  # ******
+
+        ax2.set_title('Wind Speed [$m/s$]')
+
+        ## WS Transect
+
+        # Get WS values from trajectory
+
+        # Create blank array to fill with WS values
+        WSvalusA = []
+        x = 0
+
+        # Fill in WS values by using trajectory locations (we use nearest b/c nearest are the actual and this works so whatever)
+        while x < (((Stime + 1) * 2) + 1):  # Same eqn as vtimes (not really sure why it's exactly that but it works)
+            TEST = lookupNearest(x, trajectory['lon'][x], trajectory['lat'][x])
+            WSvalusA = np.concatenate((WSvalusA, [TEST.values]))  # add old array(old values) to new array(new value)
+            x = x + 1
+
+        WSvalusB = []
+        x2 = 0
+
+        while x2 < (((Stime + 1) * 2) + 1):
+            TEST2 = lookupNearest(x2, trajectory2['lon'][x2], trajectory2['lat'][x2])
+            WSvalusB = np.concatenate((WSvalusB, [TEST2.values]))
+            x2 = x2 + 1
+
+        WSvalusA = WSvalusA / .137  # .137 so we can convert SS back to WS
+        WSvalusB = WSvalusB / .137
+
+        ax4 = fig.add_subplot(2, 2, 4)
+        H4 = plt.plot(Vtime[:-2], WSvalusA[:-2], label='Path A')
+        H6 = plt.plot(Vtime[:-2], WSvalusB[:-2], label='Path B')
+
+        plt.legend()
+
+        ax4.set_ylim([-.1, 28])  # *******
+        ax4.yaxis.set_ticks(np.arange(0, 25, 4))
+        ax4.set_ylabel('Speed [$m/s$]')
+        ax4.set_xlabel('Time [h]')
+        ax4.set_title('Wind Speed')
+
+        ##########################################################################
+
+        plt.tight_layout()
+        plt.savefig('BBBSpeeds_Transects_Cahill_Zonal', dpi=100, bbox_inches='tight')
+
+        ##########################################################################
+        ##########################################################################
+
+        # Plot 4: Precip and Ocean Heights
+
+        # Import data
+        param1 = 'lprec'
+        param2 = 'eta_t'
+
+        # Read in Vertical Profiles
+        F = XYT_NonDepth_1VAR_trajectory(param1, ds, lon_slice, lat_slice, time_slice, trajectory)
+        G = XYT_NonDepth_1VAR_trajectory(param2, ds, lon_slice, lat_slice, time_slice, trajectory)
+        H = XYT_NonDepth_1VAR_trajectory(param1, ds, lon_slice, lat_slice, time_slice, trajectory2)
+        I = XYT_NonDepth_1VAR_trajectory(param2, ds, lon_slice, lat_slice, time_slice, trajectory2)
+
+        # Get data, selecting time, depth, lat/lon slice
+        precip = ds[param1].sel(time=time_slice1)
+        height = ds[param2].sel(time=time_slice1)
+
+        # Specify longitude and latitude values for chosen domain
+        lons1 = precip.xt_ocean.values
+        lats1 = precip.yt_ocean.values
+
+        # average the data by day
+        avg_Curr = precip.sum(dim='time') / 24  # 24 for one day
+        avg_WS = height.sum(dim='time') / 24
+
+        ################################################################################
+
+        # Set Up Figure
+        plot_area = [-115, -95, 6, 20]  # [lon1, lon2, lat1, lat2], lon is '-280'-'90' for M0M model.
+
+        cmap00 = plt.cm.jet
+        cmap0 = LinearSegmentedColormap.from_list('custom', cmap00(np.linspace(0.10, 1.0, 28)))
+        cmap = cmap0
+        levels = MaxNLocator(nbins=28).tick_values(-.0005, .0025)
+        norm = BoundaryNorm(levels, cmap0.N, clip=True)
+
+        fig = plt.figure(figsize=(8.5, 7.5))
+
+        # Precip Map
+        ax1 = fig.add_subplot(2, 2, 1)
+        map1 = plot_map_background(plot_area=plot_area, ax=ax1)
+
+        H1 = plt.pcolormesh(lons1, lats1, avg_Curr, cmap=cmap, norm=norm)
+
+        plt.plot(trajectory['lon'], trajectory['lat'], color='dimgray', linewidth=4.0)
+        # plt.text(trajectory['lon'][0], trajectory['lat'][0], 'A', color='gray')
+        # plt.text(trajectory['lon'][143], trajectory['lat'][143], 'A\'', color='gray')
+
+        plt.plot(trajectory2['lon'], trajectory2['lat'], 'k', linewidth=4.0)
+        # plt.text(trajectory2['lon'][0], trajectory2['lat'][0], 'B', color='k')
+        # plt.text(trajectory2['lon'][143], trajectory2['lat'][143], 'B\'', color='k')
+
+        cbar = plt.colorbar(H1)
+        cbar.set_ticks(np.arange(0, .0025, .0005))
+
+        ax1.set_title('Daily Precipitation [$kg/m^2s$]')
+
+        # Precip Transect
+        ax3 = fig.add_subplot(2, 2, 3)
+
+        H3 = plt.plot(Vtime[:-2], F['Values'][:-2], label='Path A')
+        H5 = plt.plot(Vtime[:-2], H['Values'][:-2], label='Path B')
+
+        plt.legend()
+
+        ax3.set_ylim([-.0001, .0012])
+        ax3.yaxis.set_ticks(np.arange(0, .0012, .0002))
+        ax3.set_xlabel('Time [h]')
+        ax3.set_ylabel('Rainfall [$kg/m^2s$]')
+        ax3.set_title('Precipitation')
+
+        # Height Map
+        levels2 = MaxNLocator(nbins=28).tick_values(-.1, .6)
+        norm2 = BoundaryNorm(levels2, cmap0.N, clip=True)
+
+        ax2 = fig.add_subplot(2, 2, 2)
+        map2 = plot_map_background(plot_area=plot_area, ax=ax2)
+
+        H2 = plt.pcolormesh(lons1, lats1, avg_WS, cmap=cmap, norm=norm2)
+
+        plt.plot(trajectory['lon'], trajectory['lat'], color='dimgray', linewidth=4.0)
+        # plt.text(trajectory['lon'][0], trajectory['lat'][0], 'A', color='gray')
+        # plt.text(trajectory['lon'][143], trajectory['lat'][143], 'A\'', color='gray')
+
+        plt.plot(trajectory2['lon'], trajectory2['lat'], 'k', linewidth=4.0)
+        # plt.text(trajectory2['lon'][0], trajectory2['lat'][0], 'B', color='k')
+        # plt.text(trajectory2['lon'][143], trajectory2['lat'][143], 'B\'', color='k')
+
+        cbar = plt.colorbar(H2)
+        cbar.set_ticks(np.arange(0, .6, .1))
+
+        ax2.set_title('Ocean Surface Height [m]')
+
+        # Height Transect
+        ax4 = fig.add_subplot(2, 2, 4)
+        H4 = plt.plot(Vtime[:-2], G['Values'][:-2], label='Path A')
+        H6 = plt.plot(Vtime[:-2], I['Values'][:-2], label='Path B')
+
+        plt.legend()
+
+        ax4.set_ylim([.04, .4])
+        ax4.yaxis.set_ticks(np.arange(.05, .4, .05))
+        ax4.set_ylabel('Height [m]')
+        ax4.set_xlabel('Time [h]')
+        ax4.set_title('Ocean Surface Height')
+
+        ##########################################################################
+
+        plt.tight_layout()
+        plt.savefig('BBBWater_Transects_Cahill_Zonal', dpi=100, bbox_inches='tight')
+
+    elif Route is 'Cross':
+
+        ##### Trajectories
+
+        # Cross (Butterfly) Sectioning (Saildrone 1)
+
+        # (Saildrone 1)
+        # Starting lat and lon values
+        trajectory = {'lon': [SD1_start_lon], 'lat': [SD2_start_lon]}
+
+        lon = SS.lon_126.values
+        lat = SS.lat_126.values
+
+        def lookupNearest(time_pos, lon0, lat0):
+            loni = np.abs(lon - lon0).argmin()
+            lati = np.abs(lat - lat0).argmin()
+            return SS[time_pos, lati, loni]
+
+        # Use ^ function to find closest initial location and wind speed
+        start_traj = lookupNearest(0, trajectory['lon'], trajectory['lat'])
+
+        # Starting time value
+        trajectory = {'datetime': [dt.datetime(2003, 9, 5, 0, 0, 0)], 'lon': [float(start_traj.lon_126.values)],
+                      'lat': [float(start_traj.lat_126.values)]}
+
+        #            duration_hours, direction_ccw_from_east, SS, start_traj, prev_trajectory=None):
+        trajectory = calc_trajNEWERgrib(Stime, -90.0, SS, start_traj, prev_trajectory=trajectory)
+        start_traj = lookupNearest(Stime, trajectory['lon'][-1], trajectory['lat'][-1])  # from ^ traj last point
+        trajectory = calc_trajNEWERgrib(Stime, 90.0, SS, start_traj, prev_trajectory=trajectory)
+
+        # (Saildrone 2)
+        # Starting lat and lon values
+        trajectory2 = {'lon': [SD2_start_lon], 'lat': [SD2_start_lat]}
+
+        lon = SS.lon_126.values
+        lat = SS.lat_126.values
+
+        # Use ^ function to find closest initial location and wind speed
+        start_traj2 = lookupNearest(0, trajectory2['lon'], trajectory2['lat'])
+
+        # Starting time value
+        trajectory2 = {'datetime': [dt.datetime(2003, 9, 5, 0, 0, 0)], 'lon': [float(start_traj2.lon_126.values)],
+                       'lat': [float(start_traj2.lat_126.values)]}
+
+        #           duration_hours, direction_ccw_from_east, SS, start_traj, prev_trajectory=None):
+        trajectory2 = calc_trajNEWERgrib(Stime, 0.0, SS, start_traj2, prev_trajectory=trajectory2)
+        start_traj2 = lookupNearest(Stime, trajectory2['lon'][-1], trajectory2['lat'][-1])  # from ^ traj last point
+        trajectory2 = calc_trajNEWERgrib(Stime, 180.0, SS, start_traj2, prev_trajectory=trajectory2)
+
+        ###############################################################################
+
+        # Import data
+
+        # Open dataset via xarray
+        ds = xr.open_mfdataset('D:/CFSv2/Tests/*.nc')
+
+        # Convert time from object to datetime64
+        time = ds.variables['time'][:]
+        datetimeindex = ds.indexes['time'].to_datetimeindex()  # converts to python friendly 'datetime'
+        ds['time'] = datetimeindex
+
+        # Other Slices
+        time_slice = slice(start_time, end_time)
+        lat_slice = slice(6, 20)
+        lon_slice = slice(-115, -95)
+        depth_slice = slice(0, 150)
+        depth = 0
+
+        # Times in hours (Product 288hrs/24hrs = 12days (based on time slices)
+        Vtime = np.arange(0, (((Stime + 1) * 2) + 1), 1)
+
+        ########################################################################
+
+        # Plot 1 (Temp and Salinity)
+
+        # Read in Vertical Profiles (var, data, ...)
+        F = vertical_prof_trajectory('temp', ds, depth_slice, lon_slice, lat_slice, time_slice, trajectory)
+        G = vertical_prof_trajectory('salt', ds, depth_slice, lon_slice, lat_slice, time_slice, trajectory)
+        H = vertical_prof_trajectory('temp', ds, depth_slice, lon_slice, lat_slice, time_slice, trajectory2)
+        I = vertical_prof_trajectory('salt', ds, depth_slice, lon_slice, lat_slice, time_slice, trajectory2)
+
+        plt.style.use('dark_background')
+
+        # Day 1 Data
+        paramt = 'temp'
+        params = 'salt'
+        depth2 = 0.5
+
+        # Start and end time for day 1
+        ST = start_time
+        ET = start_time.replace("00:00:00", "23:00:00")  # only averages until end of day - not a full 24 hour avg
+        time_slice1 = slice(ST, ET)
+
+        # Get data, selecting time, depth, lat/lon slice
+        SST = ds[paramt].sel(st_ocean=depth2, time=time_slice1)
+        SSS = ds[params].sel(st_ocean=depth2, time=time_slice1)
+
+        # Specify longitude and latitude values for chosen domain
+        lons1 = SST.xt_ocean.values
+        lats1 = SST.yt_ocean.values
+
+        # average the data by day
+        avg_SST = SST.sum(dim='time') / 24  # 24 for one day
+        avg_SSS = SSS.sum(dim='time') / 24
+
+        ################################################################################
+
+        # Set Up Figure
+        plot_area = [-115, -95, 6, 20]  # [lon1, lon2, lat1, lat2], lon is '-280'-'90' for CFSv2 model.
+
+        # levels and cbar_ticks sets up color scales
+        cmap00 = plt.cm.jet
+        cmap0 = LinearSegmentedColormap.from_list('custom', cmap00(np.linspace(0.10, 1.0, 28)))
+        cmap = cmap0
+        levels = MaxNLocator(nbins=28).tick_values(10.0, 34.0)
+        norm = BoundaryNorm(levels, cmap0.N, clip=True)
+
+        fig = plt.figure(figsize=(8.5, 7.5))
+
+        #################################################################################
+
+        # SST Map
+        ax1 = fig.add_subplot(3, 2, 1)
+        map1 = plot_map_background(plot_area=plot_area, ax=ax1)
+        H1 = plt.pcolormesh(lons1, lats1, avg_SST, cmap=cmap, norm=norm)
+
+        # Plots tracks on top graph
+        plt.plot(trajectory['lon'], trajectory['lat'], color='dimgray', linewidth=4.0)
+        # plt.text(trajectory['lon'][0], trajectory['lat'][0], 'A', color='gray')
+        # plt.text(trajectory['lon'][143], trajectory['lat'][143], 'A\'', color='gray')  # Change if distance changes
+
+        plt.plot(trajectory2['lon'], trajectory2['lat'], 'k', linewidth=4.0)
+        # plt.text(trajectory2['lon'][0], trajectory2['lat'][0], 'B', color='k')
+        # plt.text(trajectory2['lon'][143], trajectory2['lat'][143], 'B\'', color='k')
+
+        cbar = plt.colorbar(H1)
+        cbar.set_ticks(np.arange(12, 34, 4))
+
+        ax1.set_title('Temperature (\N{DEGREE SIGN}C)')
+
+        # SST Transect SD1
+        ax3 = fig.add_subplot(3, 2, 3)
+
+        # See functions from Tests2
+        H3 = plt.contourf(Vtime[:-2], F['Depths'][:-2], F['Verts'][:-2, :-2], levels=levels, cmap=cmap, norm=norm,
+                          extend='both')
+        plt.gca().invert_yaxis()  # Invert cause depths
+
+        cbar = plt.colorbar(H3)
+        cbar.set_ticks(np.arange(12, 34, 4))
+
+        ax3.set_ylim([100, 0])
+        ax3.set_xlabel('Time [h]')
+        ax3.set_ylabel('Depth [m]')
+        ax3.set_title('Temperature [A]')
+
+        #################################################################################
+
+        # SSS Map
+        cmap00 = cmocean.cm.haline
+        cmap0 = LinearSegmentedColormap.from_list('custom', cmap00(np.linspace(0.0, 1.0, 15)))
+        cmap_sss = cmap0
+        levels = MaxNLocator(nbins=15).tick_values(32.5, 36.6)
+        norm_sss = BoundaryNorm(levels, cmap0.N, clip=True)
+
+        ax2 = fig.add_subplot(3, 2, 2)
+        map2 = plot_map_background(plot_area=plot_area, ax=ax2)
+        H2 = plt.pcolormesh(lons1, lats1, avg_SSS, cmap=cmap_sss, norm=norm_sss)
+
+        plt.plot(trajectory['lon'], trajectory['lat'], color='dimgray', linewidth=4.0)
+        # plt.text(trajectory['lon'][0], trajectory['lat'][0], 'A', color='gray')
+        # plt.text(trajectory['lon'][143], trajectory['lat'][143], 'A\'', color='gray')
+
+        plt.plot(trajectory2['lon'], trajectory2['lat'], 'k', linewidth=4.0)
+        # plt.text(trajectory2['lon'][0], trajectory2['lat'][0], 'B', color='k')
+        # plt.text(trajectory2['lon'][143], trajectory2['lat'][143], 'B\'', color='k')
+
+        cbar = plt.colorbar(H2)
+        cbar.set_ticks(np.arange(33, 37, 1))
+
+        ax2.set_title('Salinity (g/kg)')
+
+        ## SSS Transect SD 1
+        ax4 = fig.add_subplot(3, 2, 4)
+        H4 = plt.contourf(Vtime[:-2], G['Depths'][:-2], G['Verts'][:-2, :-2], levels=levels, cmap=cmap_sss,
+                          norm=norm_sss, extend='both')
+        plt.gca().invert_yaxis()
+
+        cbar = plt.colorbar(H4)
+        cbar.set_ticks(np.arange(33, 37, 1))
+
+        ax4.set_ylim([100, 0])
+        ax4.set_xlabel('Time [h]')
+        ax4.set_title('Salinity [A]')
+
+        ###########################################################################
+
+        # Plot 1 continued
+        # Second Set of Saildrones
+
+        # SST Transect SD 2
+        ax5 = fig.add_subplot(3, 2, 5)
+
+        cmap00 = plt.cm.jet
+        cmap0 = LinearSegmentedColormap.from_list('custom', cmap00(np.linspace(0.10, 1.0, 28)))
+        cmap = cmap0
+        levels = MaxNLocator(nbins=28).tick_values(10.0, 34.0)
+        norm = BoundaryNorm(levels, cmap0.N, clip=True)
+
+        H5 = plt.contourf(Vtime[:-2], H['Depths'][:-2], H['Verts'][:-2, :-2], levels=levels, cmap=cmap, norm=norm,
+                          extend='both')
+        plt.gca().invert_yaxis()
+
+        cbar = plt.colorbar(H5)
+        cbar.set_ticks(np.arange(12, 34, 4))
+
+        ax5.set_ylim([100, 0])
+        ax5.set_xlabel('Time [h]')
+        ax5.set_ylabel('Depth [m]')
+        ax5.set_title('Temperature [B]')
+
+        ## SSS Transect SD 2
+        cmap00 = cmocean.cm.haline
+        cmap0 = LinearSegmentedColormap.from_list('custom', cmap00(np.linspace(0.0, 1.0, 15)))
+        cmap_sss = cmap0
+        levels = MaxNLocator(nbins=15).tick_values(32.5, 36.1)
+        norm_sss = BoundaryNorm(levels, cmap0.N, clip=True)
+
+        ax6 = fig.add_subplot(3, 2, 6)
+        H6 = plt.contourf(Vtime[:-2], I['Depths'][:-2], I['Verts'][:-2, :-2], levels=levels
+                          , cmap=cmap_sss
+                          , norm=norm_sss
+                          , extend='both')
+        plt.gca().invert_yaxis()
+
+        cbar = plt.colorbar(H4)
+        cbar.set_ticks(np.arange(33, 36.5, .5))
+
+        ax6.set_ylim([100, 0])
+        ax6.set_xlabel('Time [h]')
+        ax6.set_title('Salinity [B]')
+
+        ############################################################################
+
+        plt.tight_layout()
+        plt.savefig('BBBTransects_Cahill_Cross', dpi=100, bbox_inches='tight')
+
+        ############################################
+        ############################################
+
+        # Plot 2 (Surface and Latent Heat Flux)
+
+        # Import data
+        param1 = 'swflx'
+        param2 = 'evap_heat'
+
+        # Read in Vertical Profiles
+        F = XYT_NonDepth_1VAR_trajectory(param1, ds, lon_slice, lat_slice, time_slice, trajectory)
+        G = XYT_NonDepth_1VAR_trajectory(param2, ds, lon_slice, lat_slice, time_slice, trajectory)
+        H = XYT_NonDepth_1VAR_trajectory(param1, ds, lon_slice, lat_slice, time_slice, trajectory2)
+        I = XYT_NonDepth_1VAR_trajectory(param2, ds, lon_slice, lat_slice, time_slice, trajectory2)
+
+        #################################################################################
+
+        # Day 1 Data
+
+        # Get data, selecting time, depth, lat/lon slice
+        SHflux = ds[param1].sel(time=time_slice1)
+        LHflux = ds[param2].sel(time=time_slice1)
+
+        # Specify longitude and latitude values for chosen domain
+        lons1 = SHflux.xt_ocean.values
+        lats1 = SHflux.yt_ocean.values
+
+        # average the data by day
+        avg_SHflux = SHflux.sum(dim='time') / 24  # 24 for one day
+        avg_LHflux = LHflux.sum(dim='time') / 24
+
+        ################################################################################
+
+        # Set Up Figure
+        plot_area = [-115, -95, 6, 20]  # [lon1, lon2, lat1, lat2], lon is '-280'-'90' for M0M model.
+
+        cmap00 = plt.cm.jet
+        cmap0 = LinearSegmentedColormap.from_list('custom', cmap00(np.linspace(0.10, 1.0, 28)))
+        cmap = cmap0
+        levels = MaxNLocator(nbins=28).tick_values(-20, 320.0)
+        norm = BoundaryNorm(levels, cmap0.N, clip=True)
+
+        fig = plt.figure(figsize=(8.5, 7.5))
+
+        # SH Flux Map
+        ax1 = fig.add_subplot(2, 2, 1)
+        map1 = plot_map_background(plot_area=plot_area, ax=ax1)
+
+        H1 = plt.pcolormesh(lons1, lats1, avg_SHflux, cmap=cmap, norm=norm)
+
+        plt.plot(trajectory['lon'], trajectory['lat'], color='dimgray', linewidth=4.0)
+        # plt.text(trajectory['lon'][0], trajectory['lat'][0], 'A', color='gray')
+        # plt.text(trajectory['lon'][143], trajectory['lat'][143], 'A\'', color='gray')
+
+        plt.plot(trajectory2['lon'], trajectory2['lat'], 'k', linewidth=4.0)
+        # plt.text(trajectory2['lon'][0], trajectory2['lat'][0], 'B', color='k')
+        # plt.text(trajectory2['lon'][143], trajectory2['lat'][143], 'B\'', color='k')
+
+        cbar = plt.colorbar(H1)
+        cbar.set_ticks(np.arange(0, 350, 50))
+
+        ax1.set_title('Surface Heat Flux [$W/m^2$]')
+
+        # SH Flux Transect
+        ax3 = fig.add_subplot(2, 2, 3)
+
+        H3 = plt.plot(Vtime[:-2], F['Values'][:-2], label='Path A')
+        H5 = plt.plot(Vtime[:-2], H['Values'][:-2], label='Path B')
+
+        plt.legend()
+
+        # Next two lines for color limits
+        ax3.set_ylim([-25, 1000])
+        ax3.yaxis.set_ticks(np.arange(0, 1000, 200))
+        ax3.set_xlabel('Time [h]')
+        ax3.set_ylabel('Flux [$W/m^2$]')
+        ax3.set_title('Surface Heat Flux')
+
+        # LH Flux Map
+        levels2 = MaxNLocator(nbins=28).tick_values(-270, 20)
+        norm2 = BoundaryNorm(levels2, cmap0.N, clip=True)
+
+        ax2 = fig.add_subplot(2, 2, 2)
+        map2 = plot_map_background(plot_area=plot_area, ax=ax2)
+
+        H2 = plt.pcolormesh(lons1, lats1, avg_LHflux, cmap=cmap, norm=norm2)
+
+        plt.plot(trajectory['lon'], trajectory['lat'], color='dimgray', linewidth=4.0)
+        # plt.text(trajectory['lon'][0], trajectory['lat'][0], 'A', color='gray')
+        # plt.text(trajectory['lon'][143], trajectory['lat'][143], 'A\'', color='gray')
+
+        plt.plot(trajectory2['lon'], trajectory2['lat'], 'k', linewidth=4.0)
+        # plt.text(trajectory2['lon'][0], trajectory2['lat'][0], 'B', color='k')
+        # plt.text(trajectory2['lon'][143], trajectory2['lat'][143], 'B\'', color='k')
+
+        cbar = plt.colorbar(H2)
+        cbar.set_ticks(np.arange(-250, 50, 50))
+
+        ax2.set_title('Latent Heat Flux [$W/m^2$]')
+
+        # LH Flux Transect
+        ax4 = fig.add_subplot(2, 2, 4)
+        H4 = plt.plot(Vtime[:-2], G['Values'][:-2], label='Path A')
+        H6 = plt.plot(Vtime[:-2], I['Values'][:-2], label='Path B')
+
+        plt.legend()
+
+        ax4.set_ylim([-265, 0])
+        ax4.yaxis.set_ticks(np.arange(-250, 0, 50))
+        ax4.set_xlabel('Time [h]')
+        ax4.set_ylabel('Flux [$W/m^2$]')
+        ax4.set_title('Latent Heat Flux')
+
+        ##########################################################################
+
+        plt.tight_layout()
+        plt.savefig('BBBFlux_Transects_Cahill_Cross', dpi=100, bbox_inches='tight')
+
+        ##########################################################################
+        ##########################################################################
+
+        # Plot 3 (Currents and Wind Speeds)
+
+        # Import data
+        param1 = 'u'
+        param2 = 'v'
+        param3 = 'tau_x'
+        param4 = 'tau_y'
+
+        # Read in Vertical Profiles
+        F = Depth_2VAR_trajectory(param1, param2, ds, depth, lon_slice, lat_slice, time_slice, trajectory)
+        G = XYU_NonDepth_2VAR_trajectory(param3, param4, ds, lon_slice, lat_slice, time_slice, trajectory)
+        H = Depth_2VAR_trajectory(param1, param2, ds, depth, lon_slice, lat_slice, time_slice, trajectory2)
+        I = XYU_NonDepth_2VAR_trajectory(param3, param4, ds, lon_slice, lat_slice, time_slice, trajectory2)
+
+        ##################################################################
+
+        # Get data, selecting time, depth, lat/lon slice
+        datax = ds[param1].sel(time=time_slice1)
+        datay = ds[param2].sel(time=time_slice1)
+
+        datax = np.square(datax)
+        datay = np.square(datay)
+        data = np.add(datax, datay)
+        Curr = np.sqrt(data)
+        Curr = Curr[:, 0, :, :]
+
+        # Get time range for WS
+        lat_slice1 = slice(5, 25)
+        SS1 = SS.sel(time=time_slice1)
+
+        # Specify longitude and latitude values for chosen domain
+        lons1 = Curr.xu_ocean.values
+        lats1 = Curr.yu_ocean.values
+        WSlon = SS1.lon_126.values
+        WSlat = SS1.lat_126.values
+
+        # average the data by day
+        avg_Curr = Curr.sum(dim='time') / 24  # 24 for one day
+        avg_WS = (SS1.sum(dim='time') / 24) / .137  # .137 so we can convert SS back to WS
+
+        ################################################################################
+
+        # Set Up Figure
+        plot_area = [-115, -95, 6, 20]  # [lon1, lon2, lat1, lat2], lon is '-280'-'90' for M0M model.
+
+        cmap00 = plt.cm.jet
+        cmap0 = LinearSegmentedColormap.from_list('custom', cmap00(np.linspace(0.10, 1.0, 28)))
+        cmap = cmap0
+        levels = MaxNLocator(nbins=28).tick_values(-.1, .8)
+        norm = BoundaryNorm(levels, cmap0.N, clip=True)
+
+        fig = plt.figure(figsize=(8.5, 7.5))
+
+        # Current Map
+        ax1 = fig.add_subplot(2, 2, 1)
+        map1 = plot_map_background(plot_area=plot_area, ax=ax1)
+
+        H1 = plt.pcolormesh(lons1, lats1, avg_Curr, cmap=cmap, norm=norm)
+        plt.plot(trajectory['lon'], trajectory['lat'], color='gray', linewidth=4.0)
+        # plt.text(trajectory['lon'][0], trajectory['lat'][0], 'A', color='gray')
+        # plt.text(trajectory['lon'][4], trajectory['lat'][4], 'A\'', color='gray')
+
+        plt.plot(trajectory2['lon'], trajectory2['lat'], 'k', linewidth=4.0)
+        # plt.text(trajectory2['lon'][0], trajectory2['lat'][0], 'B', color='k')
+        # plt.text(trajectory2['lon'][4], trajectory2['lat'][4], 'B\'', color='k')
+
+        cbar = plt.colorbar(H1)
+        cbar.set_ticks(np.arange(0, .8, .1))
+
+        ax1.set_title('Surface Current Speed [$m/s$]')
+
+        # Current Transect
+        ax3 = fig.add_subplot(2, 2, 3)
+
+        H3 = plt.plot(Vtime[:-2], F['Values'][:-2], label='Path A')
+        H5 = plt.plot(Vtime[:-2], H['Values'][:-2], label='Path B')
+
+        plt.legend()
+
+        # ax3.set_ylim([-.05, .9])
+        # ax3.yaxis.set_ticks(np.arange(0, .9, .1))
+        ax3.set_ylim([-.05, 1.4])
+        ax3.yaxis.set_ticks(np.arange(0, 1.4, .2))
+        ax3.set_xlabel('Time [h]')
+        ax3.set_ylabel('Speed [$m/s$]')
+        ax3.set_title('Surface Current Speed')
+
+        # WS Map
+        levels2 = MaxNLocator(nbins=28).tick_values(-2.5, 20)  # ******
+        norm2 = BoundaryNorm(levels2, cmap0.N, clip=True)
+
+        ax2 = fig.add_subplot(2, 2, 2)
+        map2 = plot_map_background(plot_area=plot_area, ax=ax2)
+
+        H2 = plt.pcolormesh(WSlon, WSlat, avg_WS, cmap=cmap, norm=norm2)
+
+        plt.plot(trajectory['lon'], trajectory['lat'], color='gray', linewidth=4.0)
+        # plt.text(trajectory['lon'][0], trajectory['lat'][0], 'A', color='gray')
+        # plt.text(trajectory['lon'][4], trajectory['lat'][4], 'A\'', color='gray')
+
+        plt.plot(trajectory2['lon'], trajectory2['lat'], 'k', linewidth=4.0)
+        # plt.text(trajectory2['lon'][0], trajectory2['lat'][0], 'B', color='k')
+        # plt.text(trajectory2['lon'][4], trajectory2['lat'][4], 'B\'', color='k')
+
+        cbar = plt.colorbar(H2)
+        cbar.set_ticks(np.arange(0, 20, 2.5))  # ******
+
+        ax2.set_title('Wind Speed [$m/s$]')
+
+        ## WS Transect
+
+        # Get WS values from trajectory
+
+        # Create blank array to fill with WS values
+        WSvalusA = []
+        x = 0
+
+        # Fill in WS values by using trajectory locations (we use nearest b/c nearest are the actual and this works so whatever)
+        while x < (((Stime + 1) * 2) + 1):  # Same eqn as vtimes (not really sure why it's exactly that but it works)
+            TEST = lookupNearest(x, trajectory['lon'][x], trajectory['lat'][x])
+            WSvalusA = np.concatenate((WSvalusA, [TEST.values]))  # add old array(old values) to new array(new value)
+            x = x + 1
+
+        WSvalusB = []
+        x2 = 0
+
+        while x2 < (((Stime + 1) * 2) + 1):
+            TEST2 = lookupNearest(x2, trajectory2['lon'][x2], trajectory2['lat'][x2])
+            WSvalusB = np.concatenate((WSvalusB, [TEST2.values]))
+            x2 = x2 + 1
+
+        WSvalusA = WSvalusA / .137  # .137 so we can convert SS back to WS
+        WSvalusB = WSvalusB / .137
+
+        ax4 = fig.add_subplot(2, 2, 4)
+        H4 = plt.plot(Vtime[:-2], WSvalusA[:-2], label='Path A')
+        H6 = plt.plot(Vtime[:-2], WSvalusB[:-2], label='Path B')
+
+        plt.legend()
+
+        ax4.set_ylim([-.1, 28])  # *******
+        ax4.yaxis.set_ticks(np.arange(0, 25, 4))
+        ax4.set_ylabel('Speed [$m/s$]')
+        ax4.set_xlabel('Time [h]')
+        ax4.set_title('Wind Speed')
+
+        ##########################################################################
+
+        plt.tight_layout()
+        plt.savefig('BBBSpeeds_Transects_Cahill_Cross', dpi=100, bbox_inches='tight')
+
+        ##########################################################################
+        ##########################################################################
+
+        # Plot 4: Precip and Ocean Heights
+
+        # Import data
+        param1 = 'lprec'
+        param2 = 'eta_t'
+
+        # Read in Vertical Profiles
+        F = XYT_NonDepth_1VAR_trajectory(param1, ds, lon_slice, lat_slice, time_slice, trajectory)
+        G = XYT_NonDepth_1VAR_trajectory(param2, ds, lon_slice, lat_slice, time_slice, trajectory)
+        H = XYT_NonDepth_1VAR_trajectory(param1, ds, lon_slice, lat_slice, time_slice, trajectory2)
+        I = XYT_NonDepth_1VAR_trajectory(param2, ds, lon_slice, lat_slice, time_slice, trajectory2)
+
+        # Get data, selecting time, depth, lat/lon slice
+        precip = ds[param1].sel(time=time_slice1)
+        height = ds[param2].sel(time=time_slice1)
+
+        # Specify longitude and latitude values for chosen domain
+        lons1 = precip.xt_ocean.values
+        lats1 = precip.yt_ocean.values
+
+        # average the data by day
+        avg_Curr = precip.sum(dim='time') / 24  # 24 for one day
+        avg_WS = height.sum(dim='time') / 24
+
+        ################################################################################
+
+        # Set Up Figure
+        plot_area = [-115, -95, 6, 20]  # [lon1, lon2, lat1, lat2], lon is '-280'-'90' for M0M model.
+
+        cmap00 = plt.cm.jet
+        cmap0 = LinearSegmentedColormap.from_list('custom', cmap00(np.linspace(0.10, 1.0, 28)))
+        cmap = cmap0
+        levels = MaxNLocator(nbins=28).tick_values(-.0005, .0025)
+        norm = BoundaryNorm(levels, cmap0.N, clip=True)
+
+        fig = plt.figure(figsize=(8.5, 7.5))
+
+        # Precip Map
+        ax1 = fig.add_subplot(2, 2, 1)
+        map1 = plot_map_background(plot_area=plot_area, ax=ax1)
+
+        H1 = plt.pcolormesh(lons1, lats1, avg_Curr, cmap=cmap, norm=norm)
+
+        plt.plot(trajectory['lon'], trajectory['lat'], color='dimgray', linewidth=4.0)
+        # plt.text(trajectory['lon'][0], trajectory['lat'][0], 'A', color='gray')
+        # plt.text(trajectory['lon'][143], trajectory['lat'][143], 'A\'', color='gray')
+
+        plt.plot(trajectory2['lon'], trajectory2['lat'], 'k', linewidth=4.0)
+        # plt.text(trajectory2['lon'][0], trajectory2['lat'][0], 'B', color='k')
+        # plt.text(trajectory2['lon'][143], trajectory2['lat'][143], 'B\'', color='k')
+
+        cbar = plt.colorbar(H1)
+        cbar.set_ticks(np.arange(0, .0025, .0005))
+
+        ax1.set_title('Daily Precipitation [$kg/m^2s$]')
+
+        # Precip Transect
+        ax3 = fig.add_subplot(2, 2, 3)
+
+        H3 = plt.plot(Vtime[:-2], F['Values'][:-2], label='Path A')
+        H5 = plt.plot(Vtime[:-2], H['Values'][:-2], label='Path B')
+
+        plt.legend()
+
+        ax3.set_ylim([-.0001, .0012])
+        ax3.yaxis.set_ticks(np.arange(0, .0012, .0002))
+        ax3.set_xlabel('Time [h]')
+        ax3.set_ylabel('Rainfall [$kg/m^2s$]')
+        ax3.set_title('Precipitation')
+
+        # Height Map
+        levels2 = MaxNLocator(nbins=28).tick_values(-.1, .6)
+        norm2 = BoundaryNorm(levels2, cmap0.N, clip=True)
+
+        ax2 = fig.add_subplot(2, 2, 2)
+        map2 = plot_map_background(plot_area=plot_area, ax=ax2)
+
+        H2 = plt.pcolormesh(lons1, lats1, avg_WS, cmap=cmap, norm=norm2)
+
+        plt.plot(trajectory['lon'], trajectory['lat'], color='dimgray', linewidth=4.0)
+        # plt.text(trajectory['lon'][0], trajectory['lat'][0], 'A', color='gray')
+        # plt.text(trajectory['lon'][143], trajectory['lat'][143], 'A\'', color='gray')
+
+        plt.plot(trajectory2['lon'], trajectory2['lat'], 'k', linewidth=4.0)
+        # plt.text(trajectory2['lon'][0], trajectory2['lat'][0], 'B', color='k')
+        # plt.text(trajectory2['lon'][143], trajectory2['lat'][143], 'B\'', color='k')
+
+        cbar = plt.colorbar(H2)
+        cbar.set_ticks(np.arange(0, .6, .1))
+
+        ax2.set_title('Ocean Surface Height [m]')
+
+        # Height Transect
+        ax4 = fig.add_subplot(2, 2, 4)
+        H4 = plt.plot(Vtime[:-2], G['Values'][:-2], label='Path A')
+        H6 = plt.plot(Vtime[:-2], I['Values'][:-2], label='Path B')
+
+        plt.legend()
+
+        ax4.set_ylim([.04, .4])
+        ax4.yaxis.set_ticks(np.arange(.05, .4, .05))
+        ax4.set_ylabel('Height [m]')
+        ax4.set_xlabel('Time [h]')
+        ax4.set_title('Ocean Surface Height')
+
+        ##########################################################################
+
+        plt.tight_layout()
+        plt.savefig('BBBWater_Transects_Cahill_Cross', dpi=100, bbox_inches='tight')
+
+    else:
+        print('Please Check Inputs and Try Again')
