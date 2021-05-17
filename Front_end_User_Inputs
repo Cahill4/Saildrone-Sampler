@@ -1,0 +1,18 @@
+
+from Sampler_Function import Sampler
+
+# Start and End Time Should follow a 'YYYY-mm-dd HH:MM:SS'
+start_time = '2003-09-23 00:00:00'
+end_time = '2003-09-25 08:00:00'
+
+# Saildrone 1 and 2 starting latitude and longitude (-180,180) locations
+SD1_start_lon = -107.825
+SD1_start_lat = 15.5
+SD2_start_lon = -102.175
+SD2_start_lat = 15.5
+
+# Route Options are Meridional, Zonal and Cross
+Route = 'Meridional'
+
+# Sampler
+Sampler(start_time, end_time, SD1_start_lon, SD1_start_lat, SD2_start_lon, SD2_start_lat, Route)
